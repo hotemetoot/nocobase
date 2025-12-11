@@ -1,0 +1,255 @@
+/**
+ * JSItemModel – Signature Pad (fixed size, SES-safe, base64)
+ */
+
+(function renderSignaturePad() {
+  var signatureFieldName = 'signature_image'; // <-- change if needed
+
+  if (!ctx || !ctx.element || !ctx.form) {
+    ctx.element.innerHTML =
+      '<div style="padding:8px 12px;border-radius:4px;border:1px solid #ff4d4f;color:#ff4d4f;font-size:13px;">' +
+      'Signature pad requires form context (ctx.form) to work.' +
+      '</div>';
+    return;
+  }
+
+  // Fixed logical and visual size to avoid layout scaling issues
+  var fixedCanvasWidth = 600;   // px
+  var fixedCanvasHeight = 220;  // px
+
+  var containerHtml =
+    '<div style="border:1px solid #f0f0f0;border-radius:6px;padding:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.04);max-width:' +
+    (fixedCanvasWidth + 24) + // a bit more for padding/border
+    'px;">' +
+    '  <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">' +
+    '    <div style="font-size:14px;font-weight:500;color:#262626;">Signature</div>' +
+    '    <div style="font-size:12px;color:#8c8c8c;">Sign with mouse or touch</div>' +
+    '  </div>' +
+    '  <div style="position:relative;border:1px dashed #d9d9d9;border-radius:4px;overflow:hidden;background:#fafafa;">' +
+    '    <canvas data-role="signature-canvas" ' +
+    '      style="display:block;width:' + fixedCanvasWidth + 'px;height:' + fixedCanvasHeight + 'px;touch-action:none;cursor:crosshair;background:#ffffff;"></canvas>' +
+    '    <div data-role="placeholder" ' +
+    '      style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;font-size:12px;color:#bfbfbf;">' +
+    '      Sign here' +
+    '    </div>' +
+    '  </div>' +
+    '  <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;">' +
+    '    <div style="font-size:12px;color:#8c8c8c;">Signature is saved with this form.</div>' +
+    '    <div>' +
+    '      <button type="button" data-role="clear" ' +
+    '        style="padding:4px 10px;font-size:12px;border-radius:4px;border:1px solid #ff4d4f;background:#fff;color:#ff4d4f;cursor:pointer;outline:none;">' +
+    '        Clear' +
+    '      </button>' +
+    '    </div>' +
+    '  </div>' +
+    '</div>';
+
+  ctx.element.innerHTML = containerHtml;
+
+  var canvas = ctx.element.querySelector('canvas[data-role="signature-canvas"]');
+  var clearButton = ctx.element.querySelector('button[data-role="clear"]');
+  var placeholder = ctx.element.querySelector('[data-role="placeholder"]');
+
+  if (!canvas) return;
+
+  var isDrawing = false;
+  var lastPoint = null;
+
+  function initCanvas(initialDataUrl) {
+    canvas.width = fixedCanvasWidth;
+    canvas.height = fixedCanvasHeight;
+
+    var context = canvas.getContext('2d');
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    context.lineWidth = 2;
+    context.strokeStyle = '#000000';
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, fixedCanvasWidth, fixedCanvasHeight);
+
+    if (initialDataUrl) {
+      try {
+        var image = new Image();
+        image.onload = function () {
+          context.drawImage(image, 0, 0, fixedCanvasWidth, fixedCanvasHeight);
+          hidePlaceholder();
+        };
+        image.src = initialDataUrl;
+      } catch (error) {
+        // ignore
+      }
+    }
+  }
+
+  function hidePlaceholder() {
+    if (placeholder) {
+      placeholder.style.display = 'none';
+    }
+  }
+
+  function showPlaceholder() {
+    if (placeholder) {
+      placeholder.style.display = 'block';
+    }
+  }
+
+  function getRelativePoint(clientX, clientY) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  }
+
+  function startStroke(point) {
+    isDrawing = true;
+    lastPoint = point;
+    hidePlaceholder();
+  }
+
+  function moveStroke(point) {
+    if (!isDrawing || !lastPoint) return;
+    var context = canvas.getContext('2d');
+    context.beginPath();
+    context.moveTo(lastPoint.x, lastPoint.y);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    lastPoint = point;
+  }
+
+  function endStroke() {
+    if (!isDrawing) return;
+    isDrawing = false;
+    lastPoint = null;
+    syncFormFieldWithCanvas();
+  }
+
+  function clearCanvas() {
+    var context = canvas.getContext('2d');
+    context.clearRect(0, 0, fixedCanvasWidth, fixedCanvasHeight);
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, fixedCanvasWidth, fixedCanvasHeight);
+    showPlaceholder();
+    syncFormFieldWithCanvas(true);
+  }
+
+  function syncFormFieldWithCanvas(isCleared) {
+    var currentValues = ctx.form.getFieldsValue ? ctx.form.getFieldsValue() : {};
+    var newValues = {};
+    for (var key in currentValues) {
+      if (Object.prototype.hasOwnProperty.call(currentValues, key)) {
+        newValues[key] = currentValues[key];
+      }
+    }
+
+    if (isCleared) {
+      newValues[signatureFieldName] = null;
+    } else {
+      try {
+        var dataUrl = canvas.toDataURL('image/png');
+        newValues[signatureFieldName] = dataUrl;
+      } catch (error) {
+        // ignore
+      }
+    }
+
+    if (ctx.form.setFieldsValue) {
+      ctx.form.setFieldsValue(newValues);
+    }
+  }
+
+  // Mouse
+  canvas.addEventListener('mousedown', function (event) {
+    event.preventDefault();
+    var point = getRelativePoint(event.clientX, event.clientY);
+    startStroke(point);
+  });
+
+  canvas.addEventListener('mousemove', function (event) {
+    if (!isDrawing) return;
+    event.preventDefault();
+    var point = getRelativePoint(event.clientX, event.clientY);
+    moveStroke(point);
+  });
+
+  canvas.addEventListener('mouseup', function (event) {
+    event.preventDefault();
+    endStroke();
+  });
+
+  canvas.addEventListener('mouseleave', function (event) {
+    if (!isDrawing) return;
+    event.preventDefault();
+    endStroke();
+  });
+
+  // Touch
+  canvas.addEventListener(
+    'touchstart',
+    function (event) {
+      if (!event.touches || !event.touches.length) return;
+      event.preventDefault();
+      var touch = event.touches[0];
+      var point = getRelativePoint(touch.clientX, touch.clientY);
+      startStroke(point);
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    'touchmove',
+    function (event) {
+      if (!event.touches || !event.touches.length || !isDrawing) return;
+      event.preventDefault();
+      var touch = event.touches[0];
+      var point = getRelativePoint(touch.clientX, touch.clientY);
+      moveStroke(point);
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    'touchend',
+    function (event) {
+      event.preventDefault();
+      endStroke();
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    'touchcancel',
+    function (event) {
+      event.preventDefault();
+      endStroke();
+    },
+    { passive: false }
+  );
+
+  if (clearButton) {
+    clearButton.addEventListener('click', function () {
+      clearCanvas();
+    });
+  }
+
+  // Load existing value (edit mode)
+  var initialDataUrl = null;
+  try {
+    if (ctx.form.getFieldValue) {
+      initialDataUrl = ctx.form.getFieldValue(signatureFieldName);
+    } else if (ctx.form.getFieldsValue) {
+      var values = ctx.form.getFieldsValue();
+      initialDataUrl = values ? values[signatureFieldName] : null;
+    }
+  } catch (error) {
+    initialDataUrl = null;
+  }
+
+  initCanvas(initialDataUrl || null);
+  if (!initialDataUrl) {
+    showPlaceholder();
+  }
+
+  // No resize listener: fixed-size canvas, so no layout-dependent drift
+})();
